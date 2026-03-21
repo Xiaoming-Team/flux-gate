@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>iplab.cc - 代理管理</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 0 auto; padding: 24px 20px; background: #f9f9f9; color: #333; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 28px; }
+    h1 { font-size: 1.4rem; margin: 0; }
+    .header-right { display: flex; gap: 10px; align-items: center; }
+    .card { background: white; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+    .card h2 { font-size: 1rem; margin: 0 0 16px; color: #555; }
+    .route-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+    .route-card { background: #f8f8f8; border: 1px solid #eee; border-radius: 6px; padding: 14px; transition: box-shadow 0.2s; }
+    .route-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .route-card .sub { font-size: 0.95rem; font-weight: 700; color: #0066cc; margin-bottom: 4px; }
+    .route-card .target { font-family: monospace; font-size: 0.85rem; color: #555; }
+    .route-card .desc { font-size: 0.8rem; color: #999; margin-top: 4px; }
+    .route-card .actions { display: flex; gap: 6px; margin-top: 10px; }
+    .route-card a.visit { background: #0066cc; color: white; padding: 4px 12px; border-radius: 4px; text-decoration: none; font-size: 0.8rem; }
+    .route-card a.visit:hover { background: #0052a3; }
+    .route-card button.del { background: #dc3545; color: white; border: none; padding: 4px 10px; border-radius: 4px; font-size: 0.8rem; cursor: pointer; }
+    .add-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: flex-end; }
+    .add-form .field { display: flex; flex-direction: column; gap: 3px; }
+    .add-form label { font-size: 0.78rem; color: #888; font-weight: 600; }
+    .add-form input { padding: 7px 10px; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; width: 130px; }
+    .add-form input:focus { outline: none; border-color: #0066cc; }
+    .add-form button { background: #28a745; color: white; border: none; padding: 7px 18px; border-radius: 4px; font-size: 0.9rem; cursor: pointer; }
+    .add-form button:hover { background: #218838; }
+    .btn-sm { padding: 6px 14px; border-radius: 4px; text-decoration: none; font-size: 0.85rem; border: none; cursor: pointer; display: inline-block; }
+    .btn-outline { border: 1px solid #ccc; background: white; color: #555; }
+    .btn-outline:hover { background: #f0f0f0; }
+    .msg { padding: 10px 14px; border-radius: 4px; margin-bottom: 14px; font-size: 0.9rem; }
+    .msg.error { background: #fff3cd; border: 1px solid #ffc107; }
+    .msg.success { background: #d4edda; border: 1px solid #28a745; }
+    .empty { text-align: center; color: #aaa; padding: 40px; }
+    @media (max-width: 600px) { .route-grid { grid-template-columns: 1fr; } .add-form input { width: 100px; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>🌐 iplab.cc 管理</h1>
+    <div class="header-right">
+      <a href="/settings" class="btn-sm btn-outline">⚙️ 设置</a>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>📋 所有路由</h2>
+    <div id="route-list"></div>
+  </div>
+
+  <div class="card">
+    <h2>➕ 添加 / 更新路由</h2>
+    <form class="add-form" onsubmit="addRoute(event)">
+      <div class="field">
+        <label>子域名</label>
+        <input name="subdomain" id="f-sub" placeholder="nas" required>
+      </div>
+      <div class="field">
+        <label>目标 IP</label>
+        <input name="ip" id="f-ip" placeholder="192.168.1.100" required>
+      </div>
+      <div class="field">
+        <label>端口</label>
+        <input name="port" id="f-port" placeholder="8080" required>
+      </div>
+      <div class="field">
+        <label>说明（可选）</label>
+        <input name="description" id="f-desc" placeholder="描述">
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button type="submit">添加</button>
+      </div>
+    </form>
+    <div id="form-msg"></div>
+  </div>
+
+<script>
+const routes = <%- JSON.stringify(routes) %>;
+
+function renderRoutes() {
+  const el = document.getElementById('route-list');
+  if (routes.length === 0) {
+    el.innerHTML = '<div class="empty">暂无路由，添加一个开始使用</div>';
+    return;
+  }
+  el.innerHTML = '<div class="route-grid">' + routes.map(r => `
+    <div class="route-card">
+      <div class="sub">${r.subdomain}.iplab.cc</div>
+      <div class="target">${r.ip}:${r.port}</div>
+      ${r.description ? `<div class="desc">${r.description}</div>` : ''}
+      <div class="actions">
+        <a href="https://${r.subdomain}.iplab.cc" target="_blank" class="visit">🔗 访问</a>
+        <button class="del" onclick="deleteRoute('${r.subdomain}')">🗑️</button>
+      </div>
+    </div>`).join('') + '</div>';
+}
+
+async function addRoute(e) {
+  e.preventDefault();
+  const subdomain = document.getElementById('f-sub').value.trim();
+  const ip = document.getElementById('f-ip').value.trim();
+  const port = document.getElementById('f-port').value.trim();
+  const description = document.getElementById('f-desc').value.trim();
+  const msg = document.getElementById('form-msg');
+
+  const res = await fetch('/api/routes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subdomain, ip, port, description })
+  });
+
+  if (res.status === 401) { alert('请重新登录'); return; }
+  const data = await res.json();
+  if (data.error) {
+    msg.innerHTML = `<div class="msg error">${data.error}</div>`;
+  } else {
+    msg.innerHTML = `<div class="msg success">✅ 路由已保存</div>`;
+    // Update local routes list and re-render
+    const idx = routes.findIndex(r => r.subdomain === subdomain);
+    if (idx >= 0) routes[idx] = { subdomain, ip, port, description };
+    else routes.push({ subdomain, ip, port, description });
+    renderRoutes();
+    document.getElementById('f-sub').value = '';
+    document.getElementById('f-ip').value = '';
+    document.getElementById('f-port').value = '';
+    document.getElementById('f-desc').value = '';
+  }
+}
+
+async function deleteRoute(subdomain) {
+  if (!confirm(`确认删除 ${subdomain}.iplab.cc ？`)) return;
+  await fetch(`/api/routes/${subdomain}`, { method: 'DELETE' });
+  const idx = routes.findIndex(r => r.subdomain === subdomain);
+  if (idx >= 0) routes.splice(idx, 1);
+  renderRoutes();
+}
+
+renderRoutes();
+</script>
+</body>
+</html>
