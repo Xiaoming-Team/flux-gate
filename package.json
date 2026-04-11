@@ -1,12 +1,18 @@
 {
-  "name": "proxy-server",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "flux-gate",
+  "version": "2.0.0",
+  "description": "自建内网穿透管理面板，基于 Cloudflare Tunnel + Node.js 代理服务器",
+  "main": "src/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/server.js",
+    "dev": "node src/server.js"
   },
-  "keywords": [],
+  "keywords": [
+    "proxy",
+    "cloudflare",
+    "tunnel",
+    "reverse-proxy"
+  ],
   "author": "",
   "license": "ISC",
   "type": "commonjs",

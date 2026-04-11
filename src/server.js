@@ -4,19 +4,17 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const PORT = 8080;
-const CONFIG_FILE = path.join(__dirname, 'config.json');
-const AUTH_FILE = path.join(__dirname, 'auth.json');
+const CONFIG_FILE = path.join(__dirname, '..', 'config.json');
 
 // ── Helpers ─────────────────────────────────────────────────
 
-function loadAuth() {
-  try { return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')); }
-  catch { return { username: 'admin', password_hash: '' }; }
+function loadConfig() {
+  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); }
+  catch { return { port: 8080, baseDomain: 'localhost', auth: { username: 'admin', password_hash: '' }, routes: [] }; }
 }
 
-function saveAuth(auth) {
-  fs.writeFileSync(AUTH_FILE, JSON.stringify(auth, null, 2));
+function saveConfig(cfg) {
+  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
 function hashPassword(password) {
@@ -24,22 +22,13 @@ function hashPassword(password) {
 }
 
 function ensureDefaultAuth() {
-  const auth = loadAuth();
-  if (!auth.password_hash) {
-    auth.username = 'admin';
-    auth.password_hash = hashPassword('admin');
-    saveAuth(auth);
+  const config = loadConfig();
+  if (!config.auth.password_hash) {
+    config.auth.username = 'admin';
+    config.auth.password_hash = hashPassword('admin');
+    saveConfig(config);
     console.log('[!] Default credentials: admin / admin');
   }
-}
-
-function loadConfig() {
-  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); }
-  catch { return { routes: [] }; }
-}
-
-function saveConfig(cfg) {
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
 function getSubdomain(req) {
@@ -49,19 +38,25 @@ function getSubdomain(req) {
 }
 
 function verifyBasicAuth(req) {
-  const auth = loadAuth();
+  const config = loadConfig();
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Basic ')) return false;
   try {
     const [user, pass] = Buffer.from(header.slice(6), 'base64').toString().split(':');
-    return user === auth.username && hashPassword(pass) === auth.password_hash;
+    return user === config.auth.username && hashPassword(pass) === config.auth.password_hash;
   } catch { return false; }
 }
 
-function sendBasicChallenge(res) {
-  res.setHeader('WWW-Authenticate', 'Basic realm="iplab.cc"');
+function sendBasicChallenge(res, realm) {
+  res.setHeader('WWW-Authenticate', `Basic realm="${realm}"`);
   res.status(401).send('Unauthorized');
 }
+
+// ── Load config ─────────────────────────────────────────────
+
+const config = loadConfig();
+const PORT = config.port || 8080;
+const BASE_DOMAIN = config.baseDomain || 'localhost';
 
 // ── Proxy setup ─────────────────────────────────────────────
 
@@ -87,7 +82,6 @@ app.use((req, res, next) => {
 
   // ── Subdomain: proxy to target ──
   if (subdomain) {
-    const config = loadConfig();
     const route = config.routes.find(r => r.subdomain === subdomain);
 
     if (!route) {
@@ -95,24 +89,24 @@ app.use((req, res, next) => {
       return;
     }
 
-    if (!verifyBasicAuth(req)) { sendBasicChallenge(res); return; }
+    if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
 
     const target = `http://${route.ip}:${route.port}`;
-    console.log(`[→] ${subdomain}.iplab.cc ${req.method} ${req.path} → ${target}`);
+    console.log(`[→] ${subdomain}.${BASE_DOMAIN} ${req.method} ${req.path} → ${target}`);
 
     httpProxyInstance.web(req, res, { target });
     return;
   }
 
   // ── Main domain: Basic Auth + management UI ──
-  if (!verifyBasicAuth(req)) { sendBasicChallenge(res); return; }
+  if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
   next();
 });
 
 app.on('upgrade', (req, socket, head) => {
   const subdomain = getSubdomain(req);
   if (!subdomain) return;
-  const route = loadConfig().routes.find(r => r.subdomain === subdomain);
+  const route = config.routes.find(r => r.subdomain === subdomain);
   if (!route) return;
   if (!verifyBasicAuth(req)) { socket.destroy(); return; }
   httpProxyInstance.ws(req, socket, head, { target: `http://${route.ip}:${route.port}` });
@@ -121,7 +115,7 @@ app.on('upgrade', (req, socket, head) => {
 // ── Management UI routes (main domain only) ─────────────────
 
 app.get('/', (req, res) => {
-  res.render('index.ejs', { baseDomain: 'iplab.cc', routes: loadConfig().routes || [] });
+  res.render('index.ejs', { baseDomain: BASE_DOMAIN, routes: config.routes || [] });
 });
 
 app.get('/settings', (req, res) => {
@@ -130,8 +124,8 @@ app.get('/settings', (req, res) => {
 
 app.post('/settings/password', (req, res) => {
   const { current, new_pass, confirm } = req.body;
-  const auth = loadAuth();
-  if (hashPassword(current) !== auth.password_hash) {
+  const cfg = loadConfig();
+  if (hashPassword(current) !== cfg.auth.password_hash) {
     return res.render('settings.ejs', { error: '当前密码错误', success: null });
   }
   if (new_pass !== confirm) {
@@ -140,45 +134,47 @@ app.post('/settings/password', (req, res) => {
   if (new_pass.length < 4) {
     return res.render('settings.ejs', { error: '新密码至少4位', success: null });
   }
-  auth.password_hash = hashPassword(new_pass);
-  saveAuth(auth);
+  cfg.auth.password_hash = hashPassword(new_pass);
+  saveConfig(cfg);
   res.render('settings.ejs', { error: null, success: '密码修改成功' });
 });
 
 // ── API ────────────────────────────────────────────────────
 
 app.get('/api/routes', (req, res) => {
-  if (!verifyBasicAuth(req)) { sendBasicChallenge(res); return; }
-  res.json(loadConfig().routes);
+  if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
+  res.json(config.routes);
 });
 
 app.post('/api/routes', (req, res) => {
-  if (!verifyBasicAuth(req)) { sendBasicChallenge(res); return; }
+  if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
   const { subdomain, ip, port, description } = req.body;
   if (!subdomain || !ip || !port) return res.status(400).json({ error: '字段不能为空' });
   const cleanSub = subdomain.toLowerCase().replace(/[^a-z0-9-]/g, '');
   if (!cleanSub) return res.status(400).json({ error: '子域名格式无效' });
 
-  const config = loadConfig();
-  const idx = config.routes.findIndex(r => r.subdomain === cleanSub);
+  const cfg = loadConfig();
+  const idx = cfg.routes.findIndex(r => r.subdomain === cleanSub);
   const entry = { subdomain: cleanSub, ip, port, description: description || '' };
-  if (idx >= 0) config.routes[idx] = entry;
-  else config.routes.push(entry);
-  saveConfig(config);
-  res.json({ ok: true, routes: config.routes });
+  if (idx >= 0) cfg.routes[idx] = entry;
+  else cfg.routes.push(entry);
+  saveConfig(cfg);
+  res.json({ ok: true, routes: cfg.routes });
 });
 
 app.delete('/api/routes/:subdomain', (req, res) => {
-  if (!verifyBasicAuth(req)) { sendBasicChallenge(res); return; }
-  const config = loadConfig();
-  config.routes = config.routes.filter(r => r.subdomain !== req.params.subdomain);
-  saveConfig(config);
-  res.json({ ok: true, routes: config.routes });
+  if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
+  const cfg = loadConfig();
+  cfg.routes = cfg.routes.filter(r => r.subdomain !== req.params.subdomain);
+  saveConfig(cfg);
+  res.json({ ok: true, routes: cfg.routes });
 });
 
 // ── Start ──────────────────────────────────────────────────
 
 ensureDefaultAuth();
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Proxy server running at http://localhost:${PORT}`);
+  console.log(`✓ Proxy server running at http://localhost:${PORT}`);
+  console.log(`✓ Base domain: ${BASE_DOMAIN}`);
+  console.log(`✓ Routes configured: ${config.routes.length}`);
 });
