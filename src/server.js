@@ -54,7 +54,7 @@ function sendBasicChallenge(res, realm) {
 
 // ── Load config ─────────────────────────────────────────────
 
-const config = loadConfig();
+let config = loadConfig();
 const PORT = config.port || 8080;
 const BASE_DOMAIN = config.baseDomain || 'localhost';
 
@@ -78,11 +78,12 @@ app.set('views', __dirname);
 // ── All requests: unified handler ───────────────────────────
 
 app.use((req, res, next) => {
+  const currentConfig = loadConfig(); // ✅ Always use latest config
   const subdomain = getSubdomain(req);
 
   // ── Subdomain: proxy to target ──
   if (subdomain) {
-    const route = config.routes.find(r => r.subdomain === subdomain);
+    const route = currentConfig.routes.find(r => r.subdomain === subdomain);
 
     if (!route) {
       res.status(404).send(`子域名 <strong>${subdomain}</strong> 未配置`);
@@ -104,9 +105,10 @@ app.use((req, res, next) => {
 });
 
 app.on('upgrade', (req, socket, head) => {
+  const currentConfig = loadConfig(); // ✅ Always use latest config
   const subdomain = getSubdomain(req);
   if (!subdomain) return;
-  const route = config.routes.find(r => r.subdomain === subdomain);
+  const route = currentConfig.routes.find(r => r.subdomain === subdomain);
   if (!route) return;
   if (!verifyBasicAuth(req)) { socket.destroy(); return; }
   httpProxyInstance.ws(req, socket, head, { target: `http://${route.ip}:${route.port}` });
@@ -115,7 +117,8 @@ app.on('upgrade', (req, socket, head) => {
 // ── Management UI routes (main domain only) ─────────────────
 
 app.get('/', (req, res) => {
-  res.render('index.ejs', { baseDomain: BASE_DOMAIN, routes: config.routes || [] });
+  const currentConfig = loadConfig(); // ✅ Always use latest config
+  res.render('index.ejs', { baseDomain: BASE_DOMAIN, routes: currentConfig.routes || [] });
 });
 
 app.get('/settings', (req, res) => {
@@ -143,7 +146,8 @@ app.post('/settings/password', (req, res) => {
 
 app.get('/api/routes', (req, res) => {
   if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
-  res.json(config.routes);
+  const currentConfig = loadConfig(); // ✅ Always use latest config
+  res.json(currentConfig.routes);
 });
 
 app.post('/api/routes', (req, res) => {
