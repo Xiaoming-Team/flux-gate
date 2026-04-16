@@ -10,7 +10,11 @@
       "subdomain": "demo",
       "ip": "192.168.1.100",
       "port": "3000",
-      "description": "示例服务"
+      "description": "Demo service",
+      "username": "",
+      "password_hash": "",
+      "no_password": false,
+      "disabled": false
     }
   ]
 }

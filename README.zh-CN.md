@@ -12,7 +12,10 @@ Flux Gate 可以帮你：
 - 通过 Cloudflare Tunnel 暴露内网 Web 服务
 - 用不同子域名转发到不同服务
 - 通过 Web 界面管理路由
-- 用一套登录保护管理后台和转发服务
+- 用默认账号密码保护管理后台和转发服务，并支持为单个转发项单独覆盖
+- 支持给每个转发项单独设置用户名和密码或无密码
+- 支持暂停和启用每个转发项目
+- 支持管理面板中英文切换
 
 示例：
 - `https://your-domain.com` → 管理后台
@@ -47,7 +50,11 @@ cp config.sample.json config.json
       "subdomain": "demo",
       "ip": "192.168.1.100",
       "port": "3000",
-      "description": "示例服务"
+      "description": "Demo service",
+      "username": "",
+      "password_hash": "",
+      "no_password": false,
+      "disabled": false
     }
   ]
 }
@@ -59,6 +66,16 @@ cp config.sample.json config.json
 - `auth.username`：登录用户名
 - `auth.password_hash`：密码的 SHA256 哈希；留空时首次启动默认 `admin/admin`
 - `routes`：子域名转发规则列表
+- `routes[].username`：可选，单个转发项自己的用户名；不填则使用默认管理账号
+- `routes[].password_hash`：可选，单个转发项自己的密码哈希；不填则使用默认管理密码
+- `routes[].no_password`：为 `true` 时，这个子网站不需要 Basic Auth
+- `routes[].disabled`：为 `true` 时，这个转发项会保留在配置中，但不再提供访问
+
+生成密码哈希：
+
+```bash
+node -e "console.log(require('crypto').createHash('sha256').update('你的密码').digest('hex'))"
+```
 
 ### 4. 准备 Cloudflare Tunnel
 
@@ -98,12 +115,6 @@ pm2 save
 
 首次部署后请立即修改。
 
-生成密码哈希：
-
-```bash
-node -e "console.log(require('crypto').createHash('sha256').update('你的密码').digest('hex'))"
-```
-
 ## 安全提醒
 
 Flux Gate 会把内网服务发布到公网。
@@ -126,7 +137,7 @@ Flux Gate 会把内网服务发布到公网。
 4. 目标服务是否真的在运行
 
 ### 怎么添加新路由？
-打开管理后台，填写子域名 / IP / 端口并保存即可，修改会立即生效。
+打开管理后台，填写子域名 / IP / 端口并保存即可。你也可以为单个转发项设置独立用户名密码、开启无密码访问，或者直接停用该转发项。所有修改都会写入 `config.json` 并立即生效。
 
 ## License
 

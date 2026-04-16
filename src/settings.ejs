@@ -1,55 +1,80 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="<%= ui.htmlLang %>">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>设置 - iplab.cc</title>
-  <style>
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    html { -webkit-text-size-adjust: 100%; }
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 420px; margin: 30px auto; padding: 20px; background: #f9f9f9; -webkit-font-smoothing: antialiased; }
-    h1 { font-size: 1.3rem; margin-bottom: 4px; }
-    .back { color: #0066cc; text-decoration: none; font-size: 0.9rem; }
-    .back:hover { text-decoration: underline; }
-    .card { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 16px; }
-    h2 { font-size: 1rem; margin: 0 0 16px; }
-    label { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; color: #555; }
-    input { width: 100%; padding: 12px 14px; min-height: 44px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; /* 防止 iOS 自动缩放 */ box-sizing: border-box; margin-bottom: 12px; }
-    input:focus { outline: none; border-color: #0066cc; }
-    button { background: #0066cc; color: white; border: none; padding: 12px 24px; min-height: 44px; width: 100%; border-radius: 6px; cursor: pointer; font-size: 1rem; }
-    button:hover { background: #0052a3; }
-    .msg { padding: 10px 14px; border-radius: 4px; margin-bottom: 14px; font-size: 0.9rem; }
-    .msg.error { background: #fff3cd; border: 1px solid #ffc107; }
-    .msg.success { background: #d4edda; border: 1px solid #28a745; }
-    .info { font-size: 0.85rem; color: #888; margin-top: 12px; }
-
-    /* Mobile responsive */
-    @media (max-width: 480px) {
-      body { margin: 16px auto; padding: 12px; }
-      .card { padding: 16px; }
-    }
-  </style>
+  <title><%= ui.projectName %> · <%= ui.settingsTitle %></title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
+          },
+          boxShadow: {
+            soft: '0 0 0 1px rgba(15,23,42,0.06), 0 10px 30px rgba(15,23,42,0.08)',
+          },
+        },
+      },
+    };
+  </script>
 </head>
-<body>
-  <a href="/" class="back">← 返回管理页</a>
-  <h1>⚙️ 设置</h1>
+<body class="min-h-screen bg-slate-50 text-slate-900 antialiased">
+  <div class="mx-auto max-w-3xl px-4 py-6 sm:px-6 lg:px-8">
+    <div class="rounded-3xl border border-slate-200/70 bg-white p-5 shadow-soft sm:p-6">
+      <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <a href="/<%= lang === 'en' ? '?lang=en' : '' %>" class="inline-flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-slate-900"><%= ui.backToDashboard %></a>
+          <div class="mt-4 flex items-center gap-3">
+            <div class="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-900 text-lg text-white">⚙️</div>
+            <div>
+              <p class="text-sm font-medium uppercase tracking-[0.24em] text-slate-400"><%= ui.projectName %></p>
+              <h1 class="text-3xl font-semibold tracking-tight text-slate-950"><%= ui.settingsTitle %></h1>
+            </div>
+          </div>
+          <p class="mt-4 max-w-2xl text-sm leading-6 text-slate-600"><%= ui.settingsDescription %></p>
+        </div>
+        <a href="<%= languageSwitchHref %>" class="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-white">🌍 <%= ui.switchLanguage %></a>
+      </div>
+    </div>
 
-  <div class="card">
-    <h2>🔑 修改密码</h2>
-    <% if (error) { %><div class="msg error"><%= error %></div><% } %>
-    <% if (success) { %><div class="msg success"><%= success %></div><% } %>
-    <form method="POST" action="/settings/password">
-      <label>当前密码</label>
-      <input name="current" type="password" required>
-      <label>新密码</label>
-      <input name="new_pass" type="password" required>
-      <label>确认新密码</label>
-      <input name="confirm" type="password" required>
-      <button type="submit">保存</button>
-    </form>
-    <p class="info">默认账号密码是 admin/admin，请及时修改。</p>
+    <div class="mt-6 rounded-3xl border border-slate-200/70 bg-slate-950 p-5 text-white shadow-soft sm:p-6">
+      <div class="mb-5">
+        <p class="text-sm font-medium text-slate-400"><%= ui.changePassword %></p>
+        <h2 class="mt-1 text-2xl font-semibold tracking-tight"><%= ui.currentPassword %> → <%= ui.newPassword %></h2>
+        <p class="mt-2 text-sm leading-6 text-slate-300"><%= ui.passwordCardDescription %></p>
+      </div>
+
+      <% if (error) { %>
+        <div class="mb-4 rounded-2xl border border-amber-400/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100"><%= error %></div>
+      <% } %>
+      <% if (success) { %>
+        <div class="mb-4 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-100"><%= success %></div>
+      <% } %>
+
+      <form method="POST" action="/settings/password<%= lang === 'en' ? '?lang=en' : '' %>" class="grid gap-4">
+        <div>
+          <label class="mb-2 block text-sm font-medium text-slate-200"><%= ui.currentPassword %></label>
+          <input name="current" type="password" required class="w-full rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3 text-base text-white placeholder:text-slate-500 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-400/15">
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div>
+            <label class="mb-2 block text-sm font-medium text-slate-200"><%= ui.newPassword %></label>
+            <input name="new_pass" type="password" required class="w-full rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3 text-base text-white placeholder:text-slate-500 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-400/15">
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-slate-200"><%= ui.confirmPassword %></label>
+            <input name="confirm" type="password" required class="w-full rounded-2xl border border-slate-700 bg-slate-900/70 px-4 py-3 text-base text-white placeholder:text-slate-500 outline-none transition focus:border-sky-400 focus:ring-4 focus:ring-sky-400/15">
+          </div>
+        </div>
+        <button type="submit" class="inline-flex items-center justify-center rounded-2xl bg-white px-4 py-3 text-sm font-semibold text-slate-950 transition hover:bg-slate-100"><%= ui.save %></button>
+      </form>
+
+      <p class="mt-4 rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-sm leading-6 text-slate-300"><%= ui.defaultCredentialTip %></p>
+    </div>
   </div>
 </body>
 </html>

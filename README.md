@@ -12,7 +12,10 @@ Flux Gate lets you:
 - expose internal web services through Cloudflare Tunnel
 - route different services with different subdomains
 - manage routes from a web UI
-- protect both the admin panel and routed services with one login
+- protect the admin panel and routed services with default credentials, while allowing per-route overrides
+- optionally set a custom username/password or no password for each forwarded route
+- pause and re-enable each forwarded route individually
+- switch the dashboard between Chinese and English
 
 Example:
 - `https://your-domain.com` → admin panel
@@ -47,7 +50,11 @@ cp config.sample.json config.json
       "subdomain": "demo",
       "ip": "192.168.1.100",
       "port": "3000",
-      "description": "Demo service"
+      "description": "Demo service",
+      "username": "",
+      "password_hash": "",
+      "no_password": false,
+      "disabled": false
     }
   ]
 }
@@ -59,6 +66,16 @@ Field summary:
 - `auth.username`: login username
 - `auth.password_hash`: SHA256 password hash; empty means first run uses `admin/admin`
 - `routes`: list of subdomain forwarding rules
+- `routes[].username`: optional route-specific username; empty means use the default admin username
+- `routes[].password_hash`: optional route-specific SHA256 password hash; empty means use the default admin password
+- `routes[].no_password`: when `true`, that sub-site is exposed without Basic Auth
+- `routes[].disabled`: when `true`, that route is saved but unavailable
+
+To generate a password hash:
+
+```bash
+node -e "console.log(require('crypto').createHash('sha256').update('your-password').digest('hex'))"
+```
 
 ### 4. Prepare Cloudflare Tunnel
 
@@ -98,12 +115,6 @@ pm2 save
 
 Change it immediately after first deployment.
 
-To generate a password hash:
-
-```bash
-node -e "console.log(require('crypto').createHash('sha256').update('your-password').digest('hex'))"
-```
-
 ## Safety notes
 
 Flux Gate publishes internal services to the public internet.
@@ -126,7 +137,7 @@ Check these first:
 4. the target service is actually running
 
 ### How do I add a new route?
-Open the admin panel, fill in subdomain / IP / port, and save it. Changes apply immediately.
+Open the admin panel, fill in subdomain / IP / port, and save it. You can also edit route-specific username/password, allow no password, or disable the route. Changes are written to `config.json` and apply immediately.
 
 ## License
 

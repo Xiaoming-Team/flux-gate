@@ -4,24 +4,147 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const CONFIG_FILE = path.join(__dirname, '..', 'config.json');
+const DEFAULT_CONFIG_FILE = path.join(__dirname, '..', 'config.json');
+const LOCALES_DIR = path.join(__dirname, 'locales');
+const SUPPORTED_LANG_CODES = ['zh', 'en'];
+const SUPPORTED_LANGS = new Set(SUPPORTED_LANG_CODES);
 
-// ── Helpers ─────────────────────────────────────────────────
-
-function loadConfig() {
-  try { return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')); }
-  catch { return { port: 8080, baseDomain: 'localhost', auth: { username: 'admin', password_hash: '' }, routes: [] }; }
+function loadTranslations() {
+  return Object.fromEntries(
+    SUPPORTED_LANG_CODES.map((lang) => {
+      const localePath = path.join(LOCALES_DIR, `${lang}.json`);
+      return [lang, JSON.parse(fs.readFileSync(localePath, 'utf8'))];
+    })
+  );
 }
 
-function saveConfig(cfg) {
-  fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
+const translations = loadTranslations();
+
+function createConfigStore(configFile = DEFAULT_CONFIG_FILE) {
+  function loadConfig() {
+    try {
+      return JSON.parse(fs.readFileSync(configFile, 'utf8'));
+    } catch {
+      return {
+        port: 8080,
+        baseDomain: 'localhost',
+        auth: { username: 'admin', password_hash: '' },
+        routes: [],
+      };
+    }
+  }
+
+  function saveConfig(cfg) {
+    fs.writeFileSync(configFile, JSON.stringify(cfg, null, 2));
+  }
+
+  return { loadConfig, saveConfig, configFile };
 }
 
 function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');
 }
 
-function ensureDefaultAuth() {
+function normalizeBoolean(value) {
+  return value === true || value === 'true' || value === '1' || value === 1 || value === 'on';
+}
+
+function sanitizeRoute(route) {
+  return {
+    subdomain: route.subdomain,
+    ip: route.ip,
+    port: route.port,
+    description: route.description || '',
+    username: route.username || '',
+    no_password: Boolean(route.no_password),
+    disabled: Boolean(route.disabled),
+    has_custom_auth: Boolean(route.username || route.password_hash),
+  };
+}
+
+function getRouteEffectiveAuth(route, config) {
+  if (route.no_password) return { noPassword: true };
+
+  return {
+    noPassword: false,
+    username: route.username || config.auth.username,
+    passwordHash: route.password_hash || config.auth.password_hash,
+  };
+}
+
+function parseCookies(req) {
+  const header = req.headers.cookie || '';
+  return header.split(';').reduce((acc, part) => {
+    const [rawKey, ...rest] = part.trim().split('=');
+    if (!rawKey) return acc;
+    acc[rawKey] = decodeURIComponent(rest.join('='));
+    return acc;
+  }, {});
+}
+
+function resolveLanguage(req) {
+  const queryLang = typeof req.query?.lang === 'string' ? req.query.lang.toLowerCase() : '';
+  if (SUPPORTED_LANGS.has(queryLang)) return queryLang;
+
+  const cookieLang = parseCookies(req).lang;
+  if (SUPPORTED_LANGS.has(cookieLang)) return cookieLang;
+
+  const acceptLanguage = (req.headers['accept-language'] || '').toLowerCase();
+  if (acceptLanguage.startsWith('en')) return 'en';
+  return 'zh';
+}
+
+function translate(lang, key, vars = {}) {
+  const dict = translations[lang] || translations.zh;
+  let text = dict[key] || translations.zh[key] || key;
+  for (const [name, value] of Object.entries(vars)) {
+    text = text.replaceAll(`{${name}}`, String(value));
+  }
+  return text;
+}
+
+function verifyBasicAuth(req, loadConfig, route = null) {
+  const config = loadConfig();
+  const effectiveAuth = route ? getRouteEffectiveAuth(route, config) : {
+    noPassword: false,
+    username: config.auth.username,
+    passwordHash: config.auth.password_hash,
+  };
+
+  if (effectiveAuth.noPassword) return true;
+
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Basic ')) return false;
+  try {
+    const [user, pass] = Buffer.from(header.slice(6), 'base64').toString().split(':');
+    return user === effectiveAuth.username && hashPassword(pass) === effectiveAuth.passwordHash;
+  } catch {
+    return false;
+  }
+}
+
+function sendBasicChallenge(res, realm, lang) {
+  res.setHeader('WWW-Authenticate', `Basic realm="${realm}"`);
+  res.status(401).send(translate(lang, 'unauthorized'));
+}
+
+function getSubdomain(req, baseDomain = '') {
+  const host = (req.headers['x-forwarded-host'] || req.headers.host || '').split(':')[0].toLowerCase();
+  const normalizedBaseDomain = String(baseDomain || '').toLowerCase();
+
+  if (!host || host === normalizedBaseDomain || host === 'localhost') return null;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return null;
+
+  if (normalizedBaseDomain && host.endsWith(`.${normalizedBaseDomain}`)) {
+    const sub = host.slice(0, -(normalizedBaseDomain.length + 1));
+    return sub || null;
+  }
+
+  const parts = host.split('.');
+  return parts.length >= 3 ? parts[0] : null;
+}
+
+function ensureDefaultAuth(loadConfig, saveConfig) {
   const config = loadConfig();
   if (!config.auth.password_hash) {
     config.auth.username = 'admin';
@@ -31,154 +154,252 @@ function ensureDefaultAuth() {
   }
 }
 
-function getSubdomain(req) {
-  const host = req.headers['x-forwarded-host'] || req.headers.host || '';
-  const parts = host.split('.');
-  return parts.length >= 3 ? parts[0] : null;
+function getLanguageSwitchHref(req, lang) {
+  const targetLang = lang === 'zh' ? 'en' : 'zh';
+  const url = new URL(`${req.protocol}://${req.get('host')}${req.originalUrl}`);
+  url.searchParams.set('lang', targetLang);
+  const search = url.searchParams.toString();
+  return `${url.pathname}${search ? `?${search}` : ''}`;
 }
 
-function verifyBasicAuth(req) {
-  const config = loadConfig();
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith('Basic ')) return false;
-  try {
-    const [user, pass] = Buffer.from(header.slice(6), 'base64').toString().split(':');
-    return user === config.auth.username && hashPassword(pass) === config.auth.password_hash;
-  } catch { return false; }
-}
+function createApp(options = {}) {
+  const { configFile = DEFAULT_CONFIG_FILE } = options;
+  const { loadConfig, saveConfig } = createConfigStore(configFile);
 
-function sendBasicChallenge(res, realm) {
-  res.setHeader('WWW-Authenticate', `Basic realm="${realm}"`);
-  res.status(401).send('Unauthorized');
-}
+  const app = express();
+  app.use(express.json());
+  app.use(express.urlencoded({ extended: true }));
+  app.set('view engine', 'ejs');
+  app.set('views', __dirname);
 
-// ── Load config ─────────────────────────────────────────────
+  const httpProxyInstance = httpProxy.createProxyServer({ ws: true, changeOrigin: true });
+  httpProxyInstance.on('error', (err, req, res) => {
+    console.error('[proxy error]', err.message);
+    if (res.writeHead) res.writeHead(502);
+    if (res.end) res.end('Proxy error: ' + err.message);
+  });
 
-let config = loadConfig();
-const PORT = config.port || 8080;
-const BASE_DOMAIN = config.baseDomain || 'localhost';
+  app.use((req, res, next) => {
+    const lang = resolveLanguage(req);
+    res.locals.lang = lang;
+    res.locals.ui = translations[lang];
+    res.locals.t = (key, vars) => translate(lang, key, vars);
+    res.locals.languageSwitchHref = getLanguageSwitchHref(req, lang);
 
-// ── Proxy setup ─────────────────────────────────────────────
+    const queryLang = typeof req.query?.lang === 'string' ? req.query.lang.toLowerCase() : '';
+    if (SUPPORTED_LANGS.has(queryLang)) {
+      res.cookie('lang', queryLang, { httpOnly: false, sameSite: 'lax', maxAge: 365 * 24 * 60 * 60 * 1000 });
+    }
 
-const httpProxyInstance = httpProxy.createProxyServer({ ws: true, changeOrigin: true });
-httpProxyInstance.on('error', (err, req, res) => {
-  console.error('[proxy error]', err.message);
-  if (res.writeHead) res.writeHead(502);
-  if (res.end) res.end('Proxy error: ' + err.message);
-});
+    next();
+  });
 
-// ── Express ─────────────────────────────────────────────────
+  app.use((req, res, next) => {
+    const currentConfig = loadConfig();
+    const baseDomain = currentConfig.baseDomain || 'localhost';
+    const subdomain = getSubdomain(req, baseDomain);
+    const lang = res.locals.lang;
 
-const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-app.set('view engine', 'ejs');
-app.set('views', __dirname);
+    if (subdomain) {
+      const route = currentConfig.routes.find((r) => r.subdomain === subdomain);
+      if (!route || route.disabled) {
+        res.status(404).send(translate(lang, 'routeNotConfigured', { subdomain }));
+        return;
+      }
 
-// ── All requests: unified handler ───────────────────────────
+      if (!verifyBasicAuth(req, loadConfig, route)) {
+        sendBasicChallenge(res, baseDomain, lang);
+        return;
+      }
 
-app.use((req, res, next) => {
-  const currentConfig = loadConfig(); // ✅ Always use latest config
-  const subdomain = getSubdomain(req);
-
-  // ── Subdomain: proxy to target ──
-  if (subdomain) {
-    const route = currentConfig.routes.find(r => r.subdomain === subdomain);
-
-    if (!route) {
-      res.status(404).send(`子域名 <strong>${subdomain}</strong> 未配置`);
+      const target = `http://${route.ip}:${route.port}`;
+      console.log(`[→] ${subdomain}.${baseDomain} ${req.method} ${req.path} → ${target}`);
+      httpProxyInstance.web(req, res, { target });
       return;
     }
 
-    if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
+    if (!verifyBasicAuth(req, loadConfig)) {
+      sendBasicChallenge(res, baseDomain, lang);
+      return;
+    }
 
-    const target = `http://${route.ip}:${route.port}`;
-    console.log(`[→] ${subdomain}.${BASE_DOMAIN} ${req.method} ${req.path} → ${target}`);
+    next();
+  });
 
-    httpProxyInstance.web(req, res, { target });
-    return;
-  }
+  app.get('/', (req, res) => {
+    const currentConfig = loadConfig();
+    res.render('index.ejs', {
+      baseDomain: currentConfig.baseDomain || 'localhost',
+      routes: (currentConfig.routes || []).map(sanitizeRoute),
+      lang: res.locals.lang,
+      ui: res.locals.ui,
+      languageSwitchHref: res.locals.languageSwitchHref,
+    });
+  });
 
-  // ── Main domain: Basic Auth + management UI ──
-  if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
-  next();
-});
+  app.get('/settings', (req, res) => {
+    const currentConfig = loadConfig();
+    res.render('settings.ejs', {
+      error: null,
+      success: null,
+      baseDomain: currentConfig.baseDomain || 'localhost',
+      lang: res.locals.lang,
+      ui: res.locals.ui,
+      languageSwitchHref: res.locals.languageSwitchHref,
+    });
+  });
 
-app.on('upgrade', (req, socket, head) => {
-  const currentConfig = loadConfig(); // ✅ Always use latest config
-  const subdomain = getSubdomain(req);
-  if (!subdomain) return;
-  const route = currentConfig.routes.find(r => r.subdomain === subdomain);
-  if (!route) return;
-  if (!verifyBasicAuth(req)) { socket.destroy(); return; }
-  httpProxyInstance.ws(req, socket, head, { target: `http://${route.ip}:${route.port}` });
-});
+  app.post('/settings/password', (req, res) => {
+    const { current, new_pass, confirm } = req.body;
+    const cfg = loadConfig();
+    const render = (error, success) => res.render('settings.ejs', {
+      error,
+      success,
+      baseDomain: cfg.baseDomain || 'localhost',
+      lang: res.locals.lang,
+      ui: res.locals.ui,
+      languageSwitchHref: res.locals.languageSwitchHref,
+    });
 
-// ── Management UI routes (main domain only) ─────────────────
+    if (hashPassword(current) !== cfg.auth.password_hash) {
+      return render(translate(res.locals.lang, 'currentPasswordWrong'), null);
+    }
+    if (new_pass !== confirm) {
+      return render(translate(res.locals.lang, 'passwordMismatch'), null);
+    }
+    if ((new_pass || '').length < 4) {
+      return render(translate(res.locals.lang, 'passwordTooShort'), null);
+    }
 
-app.get('/', (req, res) => {
-  const currentConfig = loadConfig(); // ✅ Always use latest config
-  res.render('index.ejs', { baseDomain: BASE_DOMAIN, routes: currentConfig.routes || [] });
-});
+    cfg.auth.password_hash = hashPassword(new_pass);
+    saveConfig(cfg);
+    return render(null, translate(res.locals.lang, 'passwordUpdated'));
+  });
 
-app.get('/settings', (req, res) => {
-  res.render('settings.ejs', { error: null, success: null });
-});
+  app.get('/api/routes', (req, res) => {
+    const currentConfig = loadConfig();
+    res.json((currentConfig.routes || []).map(sanitizeRoute));
+  });
 
-app.post('/settings/password', (req, res) => {
-  const { current, new_pass, confirm } = req.body;
-  const cfg = loadConfig();
-  if (hashPassword(current) !== cfg.auth.password_hash) {
-    return res.render('settings.ejs', { error: '当前密码错误', success: null });
-  }
-  if (new_pass !== confirm) {
-    return res.render('settings.ejs', { error: '两次新密码不一致', success: null });
-  }
-  if (new_pass.length < 4) {
-    return res.render('settings.ejs', { error: '新密码至少4位', success: null });
-  }
-  cfg.auth.password_hash = hashPassword(new_pass);
-  saveConfig(cfg);
-  res.render('settings.ejs', { error: null, success: '密码修改成功' });
-});
+  app.post('/api/routes', (req, res) => {
+    const { subdomain, ip, port, description, username, password, original_subdomain } = req.body;
+    if (!subdomain || !ip || !port) {
+      return res.status(400).json({ error: translate(res.locals.lang, 'requiredFields') });
+    }
 
-// ── API ────────────────────────────────────────────────────
+    const cleanSub = subdomain.toLowerCase().replace(/[^a-z0-9-]/g, '');
+    if (!cleanSub) {
+      return res.status(400).json({ error: translate(res.locals.lang, 'invalidSubdomain') });
+    }
 
-app.get('/api/routes', (req, res) => {
-  if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
-  const currentConfig = loadConfig(); // ✅ Always use latest config
-  res.json(currentConfig.routes);
-});
+    const cfg = loadConfig();
+    const originalSub = String(original_subdomain || cleanSub).toLowerCase();
+    const idx = cfg.routes.findIndex((r) => r.subdomain === originalSub);
+    const previous = idx >= 0 ? cfg.routes[idx] : null;
+    const cleanUsername = String(username || '').trim();
+    const cleanPassword = String(password || '').trim();
+    const noPassword = normalizeBoolean(req.body.no_password);
+    const disabled = normalizeBoolean(req.body.disabled);
 
-app.post('/api/routes', (req, res) => {
-  if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
-  const { subdomain, ip, port, description } = req.body;
-  if (!subdomain || !ip || !port) return res.status(400).json({ error: '字段不能为空' });
-  const cleanSub = subdomain.toLowerCase().replace(/[^a-z0-9-]/g, '');
-  if (!cleanSub) return res.status(400).json({ error: '子域名格式无效' });
+    const entry = {
+      subdomain: cleanSub,
+      ip,
+      port,
+      description: description || '',
+      no_password: noPassword,
+      disabled,
+    };
 
-  const cfg = loadConfig();
-  const idx = cfg.routes.findIndex(r => r.subdomain === cleanSub);
-  const entry = { subdomain: cleanSub, ip, port, description: description || '' };
-  if (idx >= 0) cfg.routes[idx] = entry;
-  else cfg.routes.push(entry);
-  saveConfig(cfg);
-  res.json({ ok: true, routes: cfg.routes });
-});
+    const keepExistingCustomAuth = !noPassword && !cleanUsername && !cleanPassword ? false : Boolean(previous?.username || previous?.password_hash);
 
-app.delete('/api/routes/:subdomain', (req, res) => {
-  if (!verifyBasicAuth(req)) { sendBasicChallenge(res, BASE_DOMAIN); return; }
-  const cfg = loadConfig();
-  cfg.routes = cfg.routes.filter(r => r.subdomain !== req.params.subdomain);
-  saveConfig(cfg);
-  res.json({ ok: true, routes: cfg.routes });
-});
+    if (cleanUsername) entry.username = cleanUsername;
+    else if (cleanPassword && previous?.username) entry.username = previous.username;
 
-// ── Start ──────────────────────────────────────────────────
+    if (cleanPassword) entry.password_hash = hashPassword(cleanPassword);
+    else if (!cleanUsername && !cleanPassword) {
+      // leave custom auth cleared so the route falls back to default credentials
+    } else if (previous?.password_hash && (cleanUsername || keepExistingCustomAuth)) {
+      entry.password_hash = previous.password_hash;
+    }
 
-ensureDefaultAuth();
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✓ Proxy server running at http://localhost:${PORT}`);
-  console.log(`✓ Base domain: ${BASE_DOMAIN}`);
-  console.log(`✓ Routes configured: ${config.routes.length}`);
-});
+    if (idx >= 0) cfg.routes[idx] = entry;
+    else cfg.routes.push(entry);
+    saveConfig(cfg);
+
+    return res.json({ ok: true, routes: cfg.routes.map(sanitizeRoute) });
+  });
+
+  app.patch('/api/routes/:subdomain', (req, res) => {
+    const cfg = loadConfig();
+    const idx = cfg.routes.findIndex((r) => r.subdomain === req.params.subdomain);
+    if (idx < 0) {
+      return res.status(404).json({ error: translate(res.locals.lang, 'routeNotConfigured', { subdomain: req.params.subdomain }) });
+    }
+
+    cfg.routes[idx] = {
+      ...cfg.routes[idx],
+      disabled: normalizeBoolean(req.body.disabled),
+    };
+    saveConfig(cfg);
+    return res.json({ ok: true, routes: cfg.routes.map(sanitizeRoute) });
+  });
+
+  app.delete('/api/routes/:subdomain', (req, res) => {
+    const cfg = loadConfig();
+    cfg.routes = cfg.routes.filter((r) => r.subdomain !== req.params.subdomain);
+    saveConfig(cfg);
+    res.json({ ok: true, routes: cfg.routes });
+  });
+
+  app.on('upgrade', (req, socket, head) => {
+    const currentConfig = loadConfig();
+    const baseDomain = currentConfig.baseDomain || 'localhost';
+    const subdomain = getSubdomain(req, baseDomain);
+    if (!subdomain) return;
+
+    const route = currentConfig.routes.find((r) => r.subdomain === subdomain);
+    if (!route || route.disabled) return;
+
+    if (!verifyBasicAuth(req, loadConfig, route)) {
+      socket.destroy();
+      return;
+    }
+
+    httpProxyInstance.ws(req, socket, head, { target: `http://${route.ip}:${route.port}` });
+  });
+
+  app.locals.config = { loadConfig, saveConfig, configFile };
+  return app;
+}
+
+function startServer(options = {}) {
+  const app = createApp(options);
+  const { loadConfig, saveConfig } = app.locals.config;
+  ensureDefaultAuth(loadConfig, saveConfig);
+
+  const config = loadConfig();
+  const port = config.port || 8080;
+  const baseDomain = config.baseDomain || 'localhost';
+
+  return app.listen(port, '0.0.0.0', () => {
+    const latestConfig = loadConfig();
+    console.log(`✓ Proxy server running at http://localhost:${port}`);
+    console.log(`✓ Base domain: ${baseDomain}`);
+    console.log(`✓ Routes configured: ${(latestConfig.routes || []).length}`);
+  });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  createApp,
+  createConfigStore,
+  hashPassword,
+  parseCookies,
+  resolveLanguage,
+  startServer,
+  translate,
+  translations,
+};
