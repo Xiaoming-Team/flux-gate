@@ -4,7 +4,7 @@
 
 A lightweight self-hosted gateway for publishing internal services through Cloudflare Tunnel, with a simple web admin panel and subdomain-based routing.
 
-![Admin UI](assets/admin.png)
+![](assets/admin.png)
 
 ## What it does
 
