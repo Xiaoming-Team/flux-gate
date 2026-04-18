@@ -190,11 +190,11 @@ test('GET / renders auth mode options and custom inputs are conditional', async 
     assert.match(html, new RegExp(zh.authDefaultLabel));
     assert.match(html, new RegExp(zh.authCustomLabel));
     assert.match(html, new RegExp(zh.authNoneLabel));
-    assert.match(html, /toggleAuthModeFields/);
-    assert.match(html, /custom-auth-fields/);
-    assert.match(html, /rounded-2xl border border-slate-800 bg-slate-900\/60 p-4 text-sm text-slate-200/);
-    assert.match(html, /<div id="custom-auth-fields"/);
-    assert.match(html, /<p id="no-password-warning"/);
+    assert.match(html, /<form class="grid min-w-0 gap-4" onsubmit="saveRoute\(event\)">/);
+    assert.match(html, /class="flex min-w-0 overflow-hidden rounded-2xl border border-slate-700 bg-slate-900\/70/);
+    assert.match(html, /class="inline-flex shrink-0 items-center border-l border-slate-700 bg-slate-900 px-4 text-sm font-medium text-slate-400"/);
+    assert.match(html, /class="grid min-w-0 gap-4 sm:grid-cols-2"/);
+    assert.match(html, /w-full min-w-0 rounded-2xl border border-slate-700 bg-slate-900\/70/);
   });
 });
 
@@ -367,6 +367,10 @@ test('GET / renders edit and disable controls for route cards', async () => {
     assert.match(html, /toggleRouteDisabled\('/);
     assert.match(html, /username/);
     assert.match(html, /no_password/);
+    assert.match(html, /flex min-w-0 flex-col gap-4 sm:flex-row sm:items-start/);
+    assert.match(html, /w-full min-w-0 rounded-3xl border/);
+    assert.match(html, /grid min-w-0 gap-3 md:grid-cols-2/);
+    assert.match(html, /flex shrink-0 flex-wrap gap-2 sm:flex-col sm:items-end sm:justify-start sm:self-start/);
   }, {
     routes: [
       {
